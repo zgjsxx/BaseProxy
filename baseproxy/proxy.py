@@ -157,7 +157,20 @@ class Request(HttpTransfer):
         if self.get_header('Content-Length'):
             self.set_body_data(req.rfile.read(int(self.get_header('Content-Length'))))
 
-
+    '''
+        is_auth() is a method to judge whether a request is authed or not.
+        This method is to avoid open proxy problem
+    '''
+    def is_auth(self):
+        logging.info("header is %s" %(self._headers))
+        if "cookie" in self._headers:
+            if self._headers["cookie"].find("_d_bp_") != -1:
+                return True
+            else:
+                return False
+        else:
+            return False
+        
     def to_data(self):
         # Build request
         req_data = '%s %s %s\r\n' % (self.command, self.path, self.request_version)
@@ -387,8 +400,13 @@ class CAAuth(object):
     def serial(self):
         return int("%d" % (time.time() * 1000))
 
+def prepare403_response():
+    response_version ="HTTP/1.1"
+    status="200"
+    reason = "ok"
+    res_data = '%s %s %s\r\n' % (response_version, status, reason)
 
-
+    return res_data
 
 class ProxyHandle(BaseHTTPRequestHandler):
 
@@ -430,6 +448,12 @@ class ProxyHandle(BaseHTTPRequestHandler):
         # 这里就是代理发送请求，并接收响应信息
         request = Request(self)
         request = self.mitm_request(request)
+
+        if(not request.is_auth()):
+            self.send_error(403, 'no auth')
+
+
+
         if request:
             self._proxy_sock.sendall(request.to_data())
             #将响应信息返回给客户端
@@ -496,7 +520,12 @@ class ProxyHandle(BaseHTTPRequestHandler):
             self.end_headers()
 
             #这个时候需要将客户端的socket包装成sslsocket,这个时候的self.path类似www.baidu.com:443，根据域名使用相应的证书
-            self.request = wrap_socket(self.request, server_side=True, certfile=self.server.ca[self.path.split(':')[0]])
+            import os
+            current_dir = os.path.abspath(os.path.dirname(__file__))
+            ca_path = os.path.join(current_dir,"ca.crt")
+
+            self.ca = CAAuth(ca_file = "ca.pem", cert_file = 'ca.crt')
+            self.request = wrap_socket(self.request, server_side=True, certfile=self.server.ca[self.path.split(':')[0]],ca_certs='/root/work/BaseProxy/baseproxy/ca.crt')
 
         except Exception as e:
             self.send_error(500, str(e))
